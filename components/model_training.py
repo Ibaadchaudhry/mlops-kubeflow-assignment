@@ -15,7 +15,7 @@ from pathlib import Path
 
 # Add parent directory to path
 sys.path.append(str(Path(__file__).parent.parent))
-from src.pipeline_components_mlflow import model_training_component
+from src.pipeline_components import model_training_component
 
 
 def main():

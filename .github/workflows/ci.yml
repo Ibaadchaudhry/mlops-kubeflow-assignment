@@ -56,12 +56,22 @@ jobs:
         df = pd.DataFrame(housing.data, columns=housing.feature_names)
         df['target'] = housing.target
         
-        # Convert target to categorical for classification
-        df['target'] = pd.cut(df['target'], bins=3, labels=['Low', 'Medium', 'High'])
+        # Ensure all numeric columns are properly typed
+        for col in df.columns:
+            if col != 'target':
+                df[col] = pd.to_numeric(df[col], errors='coerce')
         
-        # Save reduced dataset
+        # Ensure target is numeric
+        df['target'] = pd.to_numeric(df['target'], errors='coerce')
+        
+        # Remove any NaN values that might have been created
+        df = df.dropna()
+        
+        # Save reduced dataset with proper dtypes
         df.head(1000).to_csv('data/raw_data.csv', index=False)
-        print('✅ Test data prepared: 1000 samples')
+        print(f'✅ Test data prepared: {len(df.head(1000))} samples')
+        print(f'Data types: {df.dtypes.to_dict()}')
+        print(f'Target range: {df[\"target\"].min():.2f} to {df[\"target\"].max():.2f}')
         "
     
     - name: "Stage 2: Initialize DVC (Lightweight)"
