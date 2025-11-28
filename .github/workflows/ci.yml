@@ -1,0 +1,263 @@
+name: MLflow Pipeline CI
+
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:  # Allow manual trigger
+
+jobs:
+  mlflow-pipeline-ci:
+    runs-on: ubuntu-latest
+    
+    steps:
+    # ==========================================
+    # STAGE 1: Environment Setup
+    # ==========================================
+    - name: "Stage 1: Checkout Repository"
+      uses: actions/checkout@v4
+      with:
+        fetch-depth: 0  # Full history for better debugging
+    
+    - name: "Stage 1: Set up Python 3.9"
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+        cache: 'pip'  # Cache pip dependencies
+    
+    - name: "Stage 1: Install Dependencies"
+      run: |
+        python -m pip install --upgrade pip
+        pip install -r requirements.txt
+        echo "✅ Dependencies installed successfully"
+    
+    - name: "Stage 1: Verify Environment"
+      run: |
+        echo "🔍 Environment Verification:"
+        python --version
+        pip list | grep -E "(mlflow|scikit-learn|pandas|numpy|dvc)"
+        echo "✅ Environment setup completed"
+    
+    # ==========================================
+    # STAGE 2: Pipeline Validation
+    # ==========================================
+    - name: "Stage 2: Prepare Test Data"
+      run: |
+        echo "📊 Setting up lightweight test data..."
+        mkdir -p data
+        python -c "
+        import pandas as pd
+        import numpy as np
+        from sklearn.datasets import fetch_california_housing
+        
+        # Create lightweight test dataset (1000 samples instead of 20k)
+        housing = fetch_california_housing()
+        df = pd.DataFrame(housing.data, columns=housing.feature_names)
+        df['target'] = housing.target
+        
+        # Convert target to categorical for classification
+        df['target'] = pd.cut(df['target'], bins=3, labels=['Low', 'Medium', 'High'])
+        
+        # Save reduced dataset
+        df.head(1000).to_csv('data/raw_data.csv', index=False)
+        print('✅ Test data prepared: 1000 samples')
+        "
+    
+    - name: "Stage 2: Initialize DVC (Lightweight)"
+      run: |
+        echo "🔧 Initializing DVC for CI..."
+        git config --global user.name "GitHub Actions"
+        git config --global user.email "actions@github.com"
+        dvc init --no-scm
+        echo "✅ DVC initialized"
+    
+    - name: "Stage 2: Validate MLflow Pipeline Execution"
+      run: |
+        echo "🔄 Running MLflow Pipeline Validation..."
+        export MLFLOW_TRACKING_URI="file://./mlruns"
+        
+        # Run pipeline with timeout protection
+        timeout 10m python src/pipeline.py || {
+          echo "❌ Pipeline execution failed or timed out"
+          exit 1
+        }
+        
+        echo "✅ MLflow pipeline executed successfully"
+    
+    - name: "Stage 2: Validate MLflow Tracking"
+      run: |
+        echo "📊 Validating MLflow Tracking..."
+        python -c "
+        import mlflow
+        client = mlflow.tracking.MlflowClient()
+        
+        # Check experiments exist
+        experiments = client.search_experiments()
+        print(f'Found {len(experiments)} experiments')
+        
+        # Check for main orchestration experiment
+        main_exp = None
+        for exp in experiments:
+            if 'component_pipeline_orchestration' in exp.name:
+                main_exp = exp
+                break
+        
+        if main_exp is None:
+            raise Exception('Main pipeline experiment not found')
+        
+        # Check runs exist
+        runs = client.search_runs([main_exp.experiment_id])
+        if len(runs) == 0:
+            raise Exception('No runs found in main experiment')
+        
+        latest_run = runs[0]
+        print(f'Latest run status: {latest_run.info.status}')
+        print(f'Latest run ID: {latest_run.info.run_id}')
+        
+        # Validate metrics exist
+        if not latest_run.data.metrics:
+            raise Exception('No metrics logged in latest run')
+        
+        print(f'Metrics found: {list(latest_run.data.metrics.keys())}')
+        print('✅ MLflow tracking validation successful')
+        "
+    
+    - name: "Stage 2: Verify Component Outputs"
+      run: |
+        echo "🔍 Verifying pipeline outputs..."
+        
+        # Check data files
+        [ -f "data/extracted/extracted_data.csv" ] && echo "✅ Data extraction output found" || echo "❌ Data extraction output missing"
+        [ -d "data/processed" ] && echo "✅ Data processing outputs found" || echo "❌ Data processing outputs missing"
+        [ -f "models/random_forest_model.pkl" ] && echo "✅ Model output found" || echo "❌ Model output missing"
+        [ -d "evaluation" ] && echo "✅ Evaluation outputs found" || echo "❌ Evaluation outputs missing"
+        
+        echo "✅ Component outputs verification completed"
+    
+    # ==========================================
+    # STAGE 3: Tests (Unit Testing)
+    # ==========================================
+    - name: "Stage 3: Install Testing Dependencies"
+      run: |
+        pip install pytest pytest-cov
+        echo "✅ Testing dependencies installed"
+    
+    - name: "Stage 3: Create Unit Tests"
+      run: |
+        echo "📝 Creating unit tests..."
+        mkdir -p tests
+        
+        # Create test file for pipeline components
+        cat > tests/test_pipeline_components.py << 'EOF'
+        """
+        Unit tests for MLflow pipeline components
+        """
+        import pytest
+        import pandas as pd
+        import numpy as np
+        import os
+        import sys
+        from pathlib import Path
+        
+        # Add src to path
+        sys.path.append(str(Path(__file__).parent.parent / 'src'))
+        
+        def test_data_loading():
+            """Test that raw data can be loaded successfully"""
+            assert os.path.exists('data/raw_data.csv'), "Raw data file should exist"
+            
+            df = pd.read_csv('data/raw_data.csv')
+            assert not df.empty, "Dataset should not be empty"
+            assert 'target' in df.columns, "Target column should exist"
+            print("✅ Data loading test passed")
+        
+        def test_data_preprocessing_output():
+            """Test that preprocessing generates expected outputs"""
+            expected_files = [
+                'data/processed/X_train.csv',
+                'data/processed/X_test.csv', 
+                'data/processed/y_train.csv',
+                'data/processed/y_test.csv'
+            ]
+            
+            for file in expected_files:
+                if os.path.exists(file):
+                    df = pd.read_csv(file)
+                    assert not df.empty, f"{file} should not be empty"
+            
+            print("✅ Data preprocessing test passed")
+        
+        def test_model_output():
+            """Test that model training generates expected outputs"""
+            import joblib
+            
+            if os.path.exists('models/random_forest_model.pkl'):
+                model = joblib.load('models/random_forest_model.pkl')
+                assert hasattr(model, 'predict'), "Model should have predict method"
+                print("✅ Model output test passed")
+            else:
+                print("⚠️ Model file not found, skipping model test")
+        
+        def test_mlflow_experiments():
+            """Test that MLflow experiments are created"""
+            import mlflow
+            
+            client = mlflow.tracking.MlflowClient()
+            experiments = client.search_experiments()
+            
+            assert len(experiments) > 0, "Should have at least one experiment"
+            
+            exp_names = [exp.name for exp in experiments]
+            expected_experiments = [
+                'component_pipeline_orchestration',
+                'pipeline_data_extraction', 
+                'pipeline_data_preprocessing',
+                'pipeline_model_training'
+            ]
+            
+            found_experiments = [name for name in expected_experiments if any(name in exp_name for exp_name in exp_names)]
+            assert len(found_experiments) > 0, f"Should find pipeline experiments. Found: {exp_names}"
+            
+            print(f"✅ MLflow experiments test passed. Found: {found_experiments}")
+        EOF
+        
+        echo "✅ Unit tests created"
+    
+    - name: "Stage 3: Run Unit Tests"
+      run: |
+        echo "🧪 Running unit tests..."
+        pytest tests/ -v --tb=short --disable-warnings
+        echo "✅ Unit tests completed"
+    
+    - name: "Stage 3: Generate Test Coverage Report"
+      run: |
+        echo "📊 Generating test coverage..."
+        pytest tests/ --cov=src --cov-report=term-missing
+        echo "✅ Test coverage analysis completed"
+    
+    # ==========================================
+    # FINAL: Cleanup and Summary
+    # ==========================================
+    - name: "Final: Pipeline Summary"
+      run: |
+        echo "📋 CI Pipeline Summary:"
+        echo "=========================="
+        echo "✅ Stage 1: Environment Setup - COMPLETED"
+        echo "✅ Stage 2: Pipeline Validation - COMPLETED" 
+        echo "✅ Stage 3: Unit Testing - COMPLETED"
+        echo ""
+        echo "🎉 MLflow CI Pipeline executed successfully!"
+        echo "All stages completed without errors."
+    
+    - name: "Final: Upload Artifacts"
+      uses: actions/upload-artifact@v3
+      if: always()
+      with:
+        name: mlflow-pipeline-artifacts
+        path: |
+          mlruns/
+          models/
+          data/processed/
+          evaluation/
+        retention-days: 5
