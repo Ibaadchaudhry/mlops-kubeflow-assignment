@@ -181,8 +181,20 @@ def data_preprocessing_component(
             mlflow.log_param("feature_columns", str(feature_columns))
             
             # Convert regression target to classification (binning)
+            # First ensure target is numeric
+            y_numeric = pd.to_numeric(y, errors='coerce')
+            
             # Create 3 classes based on target value percentiles
-            y_binned = pd.cut(y, bins=3, labels=['Low', 'Medium', 'High'])
+            try:
+                y_binned = pd.cut(y_numeric, bins=3, labels=['Low', 'Medium', 'High'])
+            except Exception as e:
+                print(f"Warning: Error with pd.cut: {e}")
+                # Fallback: use quantile-based binning
+                quantiles = y_numeric.quantile([0.33, 0.67])
+                y_binned = pd.Series(['Low'] * len(y_numeric), index=y_numeric.index)
+                y_binned[y_numeric > quantiles.iloc[0]] = 'Medium'
+                y_binned[y_numeric > quantiles.iloc[1]] = 'High'
+            
             print(f"Target distribution:\n{y_binned.value_counts()}")
             
             # Log target distribution
