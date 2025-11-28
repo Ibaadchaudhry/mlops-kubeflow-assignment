@@ -69,8 +69,14 @@ jobs:
         echo "🔧 Initializing DVC for CI..."
         git config --global user.name "GitHub Actions"
         git config --global user.email "actions@github.com"
-        dvc init --no-scm
-        echo "✅ DVC initialized"
+        
+        # Check if .dvc already exists, if not initialize
+        if [ ! -d ".dvc" ]; then
+          dvc init --no-scm
+          echo "✅ DVC initialized"
+        else
+          echo "✅ DVC already initialized, skipping"
+        fi
     
     - name: "Stage 2: Validate MLflow Pipeline Execution"
       run: |
