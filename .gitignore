@@ -161,3 +161,6 @@ Thumbs.db
 # Kubernetes configs (adjust as needed)
 k8s-configs/
 *.kubeconfig
+
+# DVC remote storage (local)
+dvc-remote/
