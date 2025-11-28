@@ -54,7 +54,7 @@ def main():
         model_path = model_training_component(
             train_features_path=args.train_features_path,
             train_target_path=args.train_target_path,
-            output_dir=args.output_dir,
+            model_output_dir=args.output_dir,
             n_estimators=args.n_estimators,
             max_depth=args.max_depth,
             random_state=args.random_state

@@ -51,7 +51,7 @@ def main():
             model_path=args.model_path,
             test_features_path=args.test_features_path,
             test_target_path=args.test_target_path,
-            output_dir=args.output_dir
+            metrics_output_dir=args.output_dir
         )
         
         print(f"\nModel evaluation completed successfully!")
